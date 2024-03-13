@@ -14,7 +14,7 @@
           >組間休息</span
         >
         <span class="text-red-600" v-else>休息</span> 時間，剩餘
-        {{ phaseTimeRemaining }} 秒
+        {{ workoutTimeRemaining }} 秒
       </p>
       <p v-if="isCompleted" class="text-lg text-green-600 text-center my-4">
         恭喜，運動計畫完成！
@@ -27,7 +27,7 @@
         >運動時間 (秒):</label
       >
       <input
-        v-model.number="workoutTime"
+        v-model.number="unitWorkoutTime"
         type="number"
         id="workout-time"
         min="1"
@@ -40,7 +40,7 @@
         >運動間休息時間 (秒):</label
       >
       <input
-        v-model.number="restTime"
+        v-model.number="unitRestTime"
         type="number"
         id="rest-time"
         min="1"
@@ -117,116 +117,124 @@ import { ref, computed, onUnmounted } from "vue";
 export default {
   name: "TimerComponent",
   setup() {
-    const workoutTime = ref(30);
-    const restTime = ref(10);
+    const unitWorkoutTime = ref(5);
+    const unitRestTime = ref(2);
+    const exercisesPerSet = ref(3);
     const restBetweenSets = ref(60);
-    const exercisesPerSet = ref(4);
-    const numberOfSets = ref(3);
+    const numberOfSets = ref(2);
     const isRunning = ref(false);
-    const currentPhase = ref("workout");
-    const phaseTimeRemaining = ref(workoutTime.value);
+    const currentPhase = ref("stopped");
+    const workoutTimeRemaining = ref(unitWorkoutTime.value);
+    const restTimeRemaining = ref(unitRestTime.value);
+    const restTimeBetweenSetsRemaining = ref(restBetweenSets.value);
     const currentExerciseCount = ref(0);
     const currentSetCount = ref(0);
     const isCompleted = ref(false);
 
-    let lastTimestamp = 0;
-    let rafId = null;
+    let lastSecond = -1; // 初始化為 -1，以確保第一次更新時能夠輸出
+    const rafId = ref(null);
 
     const updateTimer = (timestamp) => {
-      if (!lastTimestamp) lastTimestamp = timestamp;
-      const progress = timestamp - lastTimestamp;
+      let currentTime = Math.floor(timestamp / 1000); // 使用 Math.floor 計算秒
 
-      if (progress >= 1000) {
-        lastTimestamp = timestamp;
-        phaseTimeRemaining.value -= 1;
-
-        if (phaseTimeRemaining.value <= 0) {
-          switchPhase();
-        }
+      if (currentTime !== lastSecond) {
+        lastSecond = currentTime; // 更新 lastSecond 為當前秒數
+        switchPhase(); // 檢查是否需要切換階段`
       }
-
-      if (isRunning.value) {
-        rafId = requestAnimationFrame(updateTimer);
-      }
+      rafId.value = window.requestAnimationFrame(updateTimer); // 繼續下一次動畫幀的請求
     };
 
     function startTimer() {
-      if (!isRunning.value) {
-        isRunning.value = true;
-        requestAnimationFrame(updateTimer);
-      }
+      if (isRunning.value) return;
+
+      isRunning.value = true;
+      currentPhase.value = "workout";
+      rafId.value = requestAnimationFrame(updateTimer);
     }
 
     function pauseTimer() {
+      if (!isRunning.value) return;
       isRunning.value = false;
-      if (rafId) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-      }
+      cancelAnimationFrame(rafId.value);
     }
 
     function resetTimer() {
-      if (rafId) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-      }
+      pauseTimer();
       isRunning.value = false;
-      currentPhase.value = "workout";
-      phaseTimeRemaining.value = workoutTime.value; // 重置為運動時間的初始值
+      currentPhase.value = "stopped";
+      workoutTimeRemaining.value = unitWorkoutTime.value;
+      restTimeRemaining.value = unitRestTime.value;
+      restTimeBetweenSetsRemaining.value = restBetweenSets.value;
       currentExerciseCount.value = 0;
       currentSetCount.value = 0;
+      isCompleted.value = false;
     }
 
     function switchPhase() {
-      // 檢查是否完成所有訓練組數
-      if (
-        currentSetCount.value === numberOfSets.value &&
-        currentPhase.value !== "workout"
-      ) {
-        pauseTimer(); // 自動暫停
-        isCompleted.value = true; // 標記運動完成
-        return; // 結束函數執行
+      if (currentPhase.value === "stopped") return;
+      if (isCompleted.value) {
+        pauseTimer();
+        return;
       }
+
+      // 運動中 workout
       if (currentPhase.value === "workout") {
-        currentExerciseCount.value += 1;
-        if (
-          currentExerciseCount.value % exercisesPerSet.value === 0 &&
-          currentSetCount.value < numberOfSets.value - 1
-        ) {
-          currentPhase.value = "restBetweenSets";
-          phaseTimeRemaining.value = restBetweenSets.value;
-          currentSetCount.value += 1;
-        } else if (
-          currentExerciseCount.value % exercisesPerSet.value !== 0 ||
-          currentSetCount.value === numberOfSets.value - 1
-        ) {
-          currentPhase.value = "rest";
-          phaseTimeRemaining.value = restTime.value;
+        if (workoutTimeRemaining.value > 0) {
+          workoutTimeRemaining.value -= 1;
+        } else {
+          currentExerciseCount.value += 1;
+          if (currentExerciseCount.value % exercisesPerSet.value === 0) {
+            currentSetCount.value += 1;
+            if (currentSetCount.value === numberOfSets.value) {
+              isCompleted.value = true;
+              pauseTimer();
+            } else {
+              currentPhase.value = "restBetweenSets";
+              restTimeBetweenSetsRemaining.value = restBetweenSets.value;
+            }
+          } else {
+            currentPhase.value = "rest";
+            restTimeRemaining.value = unitRestTime.value;
+          }
         }
-      } else if (currentPhase.value === "restBetweenSets") {
-        currentPhase.value = "workout";
-        phaseTimeRemaining.value = workoutTime.value;
-      } else {
-        currentPhase.value = "workout";
-        phaseTimeRemaining.value = workoutTime.value;
+      }
+
+      // 運動之間休息 rest
+      if (currentPhase.value === "rest") {
+        if (restTimeRemaining.value > 0) {
+          restTimeRemaining.value -= 1;
+        } else {
+          currentPhase.value = "workout";
+          workoutTimeRemaining.value = unitWorkoutTime.value;
+        }
+      }
+
+      // 組間休息 restBetweenSets
+      if (currentPhase.value === "restBetweenSets") {
+        if (restTimeBetweenSetsRemaining.value > 0) {
+          restTimeBetweenSetsRemaining.value -= 1;
+        } else {
+          currentPhase.value = "workout";
+          workoutTimeRemaining.value = unitWorkoutTime.value;
+        }
       }
     }
 
     const displayTime = computed(() => {
-      return currentPhase.value === "workout"
-        ? phaseTimeRemaining.value
-        : phaseTimeRemaining.value;
-    });
-
-    onUnmounted(() => {
-      if (rafId) {
-        cancelAnimationFrame(rafId);
+      if (currentPhase.value === "workout") {
+        return workoutTimeRemaining.value;
+      } else if (currentPhase.value === "rest") {
+        return restTimeRemaining.value;
+      } else if (currentPhase.value === "restBetweenSets") {
+        return restTimeBetweenSetsRemaining.value;
+      } else {
+        return "--";
       }
     });
 
     return {
-      workoutTime,
-      restTime,
+      unitWorkoutTime,
+      unitRestTime,
       restBetweenSets,
       exercisesPerSet,
       numberOfSets,
@@ -235,7 +243,7 @@ export default {
       resetTimer,
       isRunning,
       currentPhase,
-      phaseTimeRemaining,
+      workoutTimeRemaining,
       currentExerciseCount,
       currentSetCount,
       displayTime,
